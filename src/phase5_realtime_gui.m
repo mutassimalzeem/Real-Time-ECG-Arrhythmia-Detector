@@ -3,7 +3,7 @@ function phase5_realtime_gui()
     % EEE 4407 - Real-Time ECG Arrhythmia Detector
     % Objective: Simulate real-time data streaming and visualize state transitions.
 
-    clc; close all; % Note: Removed 'clear' so it doesn't delete function variables
+    clc; close all;
 
     % Step 0: Load Data from Phase 4
     if exist('phase4_workspace.mat', 'file')
@@ -13,7 +13,7 @@ function phase5_realtime_gui()
         lower_bound = loadedData.lower_bound;
         upper_bound = loadedData.upper_bound;
         mu_train = loadedData.mu_train;
-        fprintf('? Loaded detection parameters from Phase 4 workspace.\n');
+        fprintf('✔ Loaded detection parameters from Phase 4 workspace.\n');
     else
         error('Error: phase4_workspace.mat not found. Please run Phases 1-4 first.');
     end
@@ -47,7 +47,7 @@ function phase5_realtime_gui()
     y_min = min([lower_bound - 150, min(data_stream)]);
     y_max = max([upper_bound + 150, max(data_stream)]);
     ylim(ax, [y_min, y_max]);
-    xlim(ax, [0, N]);
+    xlim(ax, [0, 50]); % Set initial width to 50 to avoid dynamic rescaling lag
 
     % Threshold Lines
     yline(ax, lower_bound, 'g--', sprintf('Lower 95%% CI: %.0f ms', lower_bound), ...
@@ -81,11 +81,11 @@ function phase5_realtime_gui()
         'FontSize', 11, 'HorizontalAlignment', 'left');
 
     % Control Buttons
-    btn_start = uibutton(fig, 'Text', '? Start Real-Time Simulation', ...
+    btn_start = uibutton(fig, 'Text', '▶ Start Real-Time Simulation', ...
         'Position', [50, 100, 280, 50], 'BackgroundColor', [0 0.6 0], ...
         'FontColor', 'w', 'FontSize', 14, 'FontWeight', 'bold');
 
-    btn_reset = uibutton(fig, 'Text', ' Reset Simulation', ...
+    btn_reset = uibutton(fig, 'Text', '↺ Reset Simulation', ...
         'Position', [350, 100, 200, 50], 'BackgroundColor', [0.8 0.2 0.2], ...
         'FontColor', 'w', 'FontSize', 14, 'FontWeight', 'bold');
 
@@ -93,18 +93,16 @@ function phase5_realtime_gui()
         'Based on MIT-BIH Database Patient 100'], ...
         'Position', [50, 50, 800, 20], 'FontSize', 10);
 
-    % Step 2: Define Callbacks and Final Print Statements
+    % Step 2: Assign Callbacks
     btn_start.ButtonPushedFcn = @(src, event) startSimulation();
     btn_reset.ButtonPushedFcn = @(src, event) resetSimulation();
 
     fprintf('\n===========================================\n');
-    fprintf('? PHASE 5 GUI LAUNCHED SUCCESSFULLY!\n');
+    fprintf('✔ PHASE 5 GUI LAUNCHED SUCCESSFULLY!\n');
     fprintf('===========================================\n');
     fprintf('The GUI is now open. Click "Start Real-Time Simulation" to begin.\n');
 
-    % Step 3: Nested Functions 
-    % Because they are nested inside phase5_realtime_gui(), they share its workspace.
-
+    % Step 3: Nested Functions
     function startSimulation()
         btn_start.Enable = 'off';
         btn_reset.Enable = 'off';
@@ -114,25 +112,32 @@ function phase5_realtime_gui()
         cla(ax);
         hold(ax, 'on');
         
+        % Pre-set axis limits before starting stream
+        xlim(ax, [0, 50]); 
+        ylim(ax, [y_min, y_max]);
+        
         yline(ax, lower_bound, 'g--', sprintf('Lower 95%% CI: %.0f ms', lower_bound), 'Color', 'g', 'LineWidth', 2);
         yline(ax, upper_bound, 'g--', sprintf('Upper 95%% CI: %.0f ms', upper_bound), 'Color', 'g', 'LineWidth', 2);
         yline(ax, mu_train, 'k-', sprintf('Mean: %.0f ms', mu_train), 'Color', 'k', 'LineWidth', 1.5);
         
-        % Initialize plot handles (Added a continuous trend line for better insights)
-        h_trend = plot(ax, NaN, NaN, '-', 'Color', [0.7 0.7 0.7], 'LineWidth', 1.5, 'DisplayName', 'Signal Trend');
-        h_normal = plot(ax, NaN, NaN, 'b.', 'MarkerSize', 15, 'DisplayName', 'Normal (H_0)');
+        % Initialize plot handles
+        h_trend   = plot(ax, NaN, NaN, '-', 'Color', [0.7 0.7 0.7], 'LineWidth', 1.5, 'DisplayName', 'Signal Trend');
+        h_normal  = plot(ax, NaN, NaN, 'b.', 'MarkerSize', 15, 'DisplayName', 'Normal (H_0)');
         h_anomaly = plot(ax, NaN, NaN, 'r*', 'MarkerSize', 18, 'LineWidth', 2, 'DisplayName', 'Arrhythmia (H_1)');
         legend(ax, 'show', 'Location', 'northeast');
         
-        % Independent coordinate arrays to fix the shape/size error
-        x_all = []; y_all = [];
-        x_norm = []; y_norm = []; 
-        x_anom = []; y_anom = [];
+        % Pre-allocate fixed-size buffers for performance and synchronization
+        x_all  = zeros(1, N); y_all  = nan(1, N);
+        x_norm = nan(1, N);   y_norm = nan(1, N);
+        x_anom = nan(1, N);   y_anom = nan(1, N);
         anomaly_count = 0;
+        
+        % Flush setup rendering queue
+        drawnow; 
         
         % Real-time streaming loop
         for i = 1:N
-            % SAFETY CHECK: Break loop if window is closed or simulation is reset
+            % Safety check if window is closed during execution
             if ~isvalid(h_normal) || ~isvalid(ax) 
                 return; 
             end
@@ -140,44 +145,52 @@ function phase5_realtime_gui()
             current_rr = data_stream(i);
             current_state = states_stream(i);
             
-            x_all = [x_all, i];
-            y_all = [y_all, current_rr];
+            x_all(i) = i;
+            y_all(i) = current_rr;
             rr_label.Text = sprintf('%.2f ms', current_rr);
             
             if current_state == 1
-                x_norm = [x_norm, i];
-                y_norm = [y_norm, current_rr];
+                x_norm(i) = i;
+                y_norm(i) = current_rr;
                 lamp.Color = [0 0.85 0]; 
-                status_text.Text = '? NORMAL SINUS RHYTHM';
+                status_text.Text = '✔ NORMAL SINUS RHYTHM';
                 status_text.FontColor = [0 0.6 0];
                 state_label.Text = 'State 1: Normal (H_0 Accepted)';
                 state_label.FontColor = 'b';
             else
-                x_anom = [x_anom, i];
-                y_anom = [y_anom, current_rr];
+                x_anom(i) = i;
+                y_anom(i) = current_rr;
                 lamp.Color = [0.95 0 0]; 
-                status_text.Text = '? ARRHYTHMIA DETECTED!';
+                status_text.Text = '⚠ ARRHYTHMIA DETECTED!';
                 status_text.FontColor = [0.9 0 0];
                 state_label.Text = 'State 2: Anomaly (H_1 Rejected)';
                 state_label.FontColor = 'r';
                 anomaly_count = anomaly_count + 1;
             end
             
-            % Update Plots with perfectly matched X and Y arrays
-            set(h_trend, 'XData', x_all, 'YData', y_all);
-            set(h_normal, 'XData', x_norm, 'YData', y_norm);
-            set(h_anomaly, 'XData', x_anom, 'YData', y_anom);
+            % Update plot data with exact pre-sliced array subsets
+            set(h_trend,   'XData', x_all(1:i),  'YData', y_all(1:i));
+            set(h_normal,  'XData', x_norm(1:i), 'YData', y_norm(1:i));
+            set(h_anomaly, 'XData', x_anom(1:i), 'YData', y_anom(1:i));
             
-            % Auto-scroll the view
+            % Smooth window scrolling
             if i > 50
                 xlim(ax, [i-50, i]);
+            else
+                xlim(ax, [0, 50]);
             end
             
-            drawnow; 
-            pause(0.05); 
+            % Limit updates to UI frame rate for sync stability
+            drawnow limitrate; 
+            
+            if current_state ~= 1
+                pause(0.25); % Brief pause to highlight arrhythmia alerts
+            else
+                pause(0.04); 
+            end
         end
         
-        status_text.Text = '? SIMULATION COMPLETE';
+        status_text.Text = '✔ SIMULATION COMPLETE';
         status_text.FontColor = 'k';
         lamp.Color = [0.8 0.8 0.8];
         rr_label.Text = sprintf('Total: %d beats', N);
@@ -186,7 +199,7 @@ function phase5_realtime_gui()
         btn_reset.Enable = 'on';
         
         fprintf('\n===========================================\n');
-        fprintf('? SIMULATION COMPLETE\n');
+        fprintf('✔ SIMULATION COMPLETE\n');
         fprintf('===========================================\n');
         fprintf('Total beats processed: %d\n', N);
         fprintf('Arrhythmias detected: %d\n', anomaly_count);
@@ -207,7 +220,7 @@ function phase5_realtime_gui()
         state_label.Text = 'Waiting...';
         state_label.FontColor = 'k';
         
-        xlim(ax, [0, N]);
+        xlim(ax, [0, 50]);
         ylim(ax, [y_min, y_max]);
         
         btn_start.Enable = 'on';
@@ -215,5 +228,4 @@ function phase5_realtime_gui()
         
         fprintf('System reset. Ready for new simulation.\n');
     end
-
-end % End of main function
+end
